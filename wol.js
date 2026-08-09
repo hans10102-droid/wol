@@ -196,11 +196,11 @@ const ocr = `
     var worker=await Tesseract.createWorker("eng");
     await worker.setParameters({
       tessedit_pageseg_mode:"7",
-      tessedit_char_whitelist:"abcdefghijklmnopqrstuvwxyz0123456789"
+      tessedit_char_whitelist:"abcdefghijklmnopqrstuvwxyz"
     });
     var r=await worker.recognize(c);
     await worker.terminate();
-    var t=(r.data.text||"").replace(/[^A-Za-z0-9]/g,"");
+    var t=(r.data.text||"").toLowerCase().replace(/[^a-z]/g,"");
     var cap=document.getElementById("captchatext");
     if(t&&cap){
       cap.value=t;
