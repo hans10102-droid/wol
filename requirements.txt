@@ -1,0 +1,5 @@
+numpy>=1.24
+opencv-python-headless>=4.8
+Pillow>=10.0
+# Optional Tesseract fallback (only if you skip training the KNN model):
+# pytesseract>=0.3.10   # also needs the system `tesseract` binary
