@@ -121,21 +121,61 @@ const ocr = `
       });
     }
     status("캡차 인식중...");
-    // 전처리: 3배 확대 + 흑백 이진화 (줄무늬 캡차 인식률 향상)
+    // 전처리: 4배 확대 → 그레이스케일 → Otsu 자동 이진화 → 미디언 필터로 가로줄 제거
+    var SC=4, W=img.naturalWidth*SC, H=img.naturalHeight*SC;
     var c=document.createElement("canvas");
-    var W=img.naturalWidth*3, H=img.naturalHeight*3;
     c.width=W; c.height=H;
     var x=c.getContext("2d");
     x.imageSmoothingEnabled=true;
     x.drawImage(img,0,0,W,H);
     var id=x.getImageData(0,0,W,H), p=id.data;
-    for(var j=0;j<p.length;j+=4){
-      var g=p[j]*0.299+p[j+1]*0.587+p[j+2]*0.114;
-      var v=g<140?0:255;
-      p[j]=p[j+1]=p[j+2]=v;
+    // 그레이스케일 + 히스토그램
+    var gray=new Uint8ClampedArray(W*H), hist=new Array(256).fill(0);
+    for(var j=0,q=0;j<p.length;j+=4,q++){
+      var g=(p[j]*0.299+p[j+1]*0.587+p[j+2]*0.114)|0;
+      gray[q]=g; hist[g]++;
+    }
+    // Otsu 임계값 자동 계산
+    var total=W*H, sum=0;
+    for(var t0=0;t0<256;t0++) sum+=t0*hist[t0];
+    var sumB=0,wB=0,mx=0,thr=140;
+    for(var t1=0;t1<256;t1++){
+      wB+=hist[t1]; if(wB===0) continue;
+      var wF=total-wB; if(wF===0) break;
+      sumB+=t1*hist[t1];
+      var mB=sumB/wB, mF=(sum-sumB)/wF, between=wB*wF*(mB-mF)*(mB-mF);
+      if(between>mx){mx=between; thr=t1;}
+    }
+    // 이진화
+    var bin=new Uint8ClampedArray(W*H);
+    for(var q2=0;q2<total;q2++) bin[q2]=gray[q2]<thr?0:255;
+    // 3x3 미디언 필터 — 얇은 가로줄 제거, 굵은 글자획 유지
+    var out=new Uint8ClampedArray(W*H);
+    for(var yy=0;yy<H;yy++){
+      for(var xx=0;xx<W;xx++){
+        var black=0,cnt=0;
+        for(var dy=-1;dy<=1;dy++){
+          var ny=yy+dy; if(ny<0||ny>=H) continue;
+          for(var dx=-1;dx<=1;dx++){
+            var nx=xx+dx; if(nx<0||nx>=W) continue;
+            cnt++; if(bin[ny*W+nx]===0) black++;
+          }
+        }
+        out[yy*W+xx]=(black*2>cnt)?0:255;
+      }
+    }
+    for(var q3=0,o=0;q3<total;q3++,o+=4){
+      var vv=out[q3]; p[o]=p[o+1]=p[o+2]=vv; p[o+3]=255;
     }
     x.putImageData(id,0,0);
-    var r=await Tesseract.recognize(c.toDataURL("image/png"),"eng");
+    // 한 줄 단어 인식(PSM 7) + 글자 화이트리스트
+    var worker=await Tesseract.createWorker("eng");
+    await worker.setParameters({
+      tessedit_pageseg_mode:"7",
+      tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    });
+    var r=await worker.recognize(c);
+    await worker.terminate();
     var t=(r.data.text||"").replace(/[^A-Za-z0-9]/g,"");
     var cap=document.getElementById("captchatext");
     if(t&&cap){
