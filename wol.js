@@ -6,6 +6,16 @@ const BASE = "http://" + HOST
 const START = BASE + "/start.asp"
 const PASSWORD = "imhs514!"
 
+// 단축어(백그라운드 확장)에서는 WebView.present()가 금지되어 있으므로
+// Scriptable 앱으로 점프해서 이 스크립트를 다시 실행한다
+if (!config.runsInApp) {
+  const cb = new CallbackURL("scriptable:///run")
+  cb.addParameter("scriptName", Script.name())
+  cb.open()
+  Script.complete()
+  return
+}
+
 const wait = ms => new Promise(r => Timer.schedule(ms, false, r))
 
 // start.asp를 직접 받아온다 (기존의 사전 loadURL + 1.5초 대기는 불필요해서 제거)
