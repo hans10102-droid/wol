@@ -83,8 +83,9 @@ for (let i = 0; i < 10; i++) {
 // Tesseract.js(OCR 라이브러리)를 불러와 캡차 이미지를 읽어 Code 칸을 채운다.
 // 페이지가 http라서 https CDN 로드는 mixed-content 차단 대상이 아니다.
 // 인식 결과가 틀릴 수 있으므로 자동 로그인은 하지 않는다 — 눈으로 확인 후 로그인.
+// 이 스크립트는 페이지에 심자마자 즉시 반환하고, 인식 작업은 페이지 안에서
+// 백그라운드로 진행된다 (present와 동시에 Scriptable API를 쓰면 화면이 깨짐)
 const ocr = `
-var completion = completion;
 (async function(){
   // 화면 맨 위 상태 표시줄: 회색=진행중, 초록=성공, 빨강=실패
   function status(msg, ok){
@@ -108,7 +109,7 @@ var completion = completion;
       if(i&&i.complete&&i.naturalWidth>0){img=i;break;}
       await new Promise(function(r){setTimeout(r,200);});
     }
-    if(!img){status("캡차 이미지를 못 찾음 — 직접 입력하세요",false);completion("NOIMG");return;}
+    if(!img){status("캡차 이미지를 못 찾음 — 직접 입력하세요",false);return;}
     if(!window.Tesseract){
       status("인식 엔진 내려받는 중 (최초 1회만 느림)...");
       await new Promise(function(res,rej){
@@ -145,21 +146,20 @@ var completion = completion;
     }else{
       status("인식 실패 — Code를 직접 입력하세요",false);
     }
-    completion(t||"EMPTY");
   }catch(e){
     status("인식 오류: "+((e&&e.message)||e)+" — 직접 입력하세요",false);
-    completion("ERR");
   }
 })();
+"STARTED"
 `
 
-// 화면을 먼저 띄우고 OCR은 그 위에서 진행 — 진행 상황이 상태줄로 보인다.
-// 창을 닫을 때까지 대기한 뒤 단축어에 즉시 완료를 알린다.
-const presented = wv.present(true)
 try {
-  await wv.evaluateJavaScript(ocr, true)
+  await wv.evaluateJavaScript(ocr, false)
 } catch (e) {
-  // OCR 실패해도 로그인 화면은 그대로 사용 가능 — Code만 직접 입력하면 됨
+  // OCR 심기에 실패해도 로그인 화면은 그대로 사용 가능 — Code만 직접 입력하면 됨
 }
-await presented
+
+// 화면 표시 — OCR은 페이지 안에서 진행되고 상태줄로 보인다.
+// 창을 닫을 때까지 대기한 뒤 단축어에 즉시 완료를 알린다.
+await wv.present(true)
 Script.complete()
