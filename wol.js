@@ -226,16 +226,52 @@ const ocr = `
   // 지우려는 조각의 위/아래로 잉크가 길게 이어지면 글자의 세로획이
   // 지나는 것이므로 남긴다 -> 글자가 두 동강 나서 사라지는 일을 막는다.
   // 반대로 c의 트인 부분처럼 위아래가 비어 있으면 지운다 -> c가 e로 안 읽힌다.
-  function removeLine(bin, W, H, path){
-    var out = new Uint8Array(bin), K = Math.max(2, Math.round(SC*1.5)), x, y;
+  function removeLine(bin, W, H, path, tol){
+    var out = new Uint8Array(bin), x, y;
+    var MARGIN = Math.max(2, Math.round(SC*2.5));
+
+    // 선은 이미지 왼쪽 끝에서 오른쪽 끝까지 이어지므로 글자 사이 빈 곳을 반드시 지난다.
+    // 그 구간(위아래가 비어 있는 곳)에서 선의 진짜 두께를 재둔다.
+    var iso=[];
     for(x=0;x<W;x++){
       var r = path[x] && path[x].run;
       if(!r) continue;
       var up=0, dn=0;
-      for(y=r.a-1; y>=0 && bin[y*W+x]===1; y--) up++;
-      for(y=r.b+1; y<H  && bin[y*W+x]===1; y++) dn++;
-      if(up>=K && dn>=K) continue;   // 세로획이 관통 -> 글자 획이므로 보존
-      for(y=r.a;y<=r.b;y++) out[y*W+x]=0;
+      for(y=r.a-1; y>=0 && up<MARGIN; y--){ if(bin[y*W+x]===1) break; up++; }
+      for(y=r.b+1; y<H  && dn<MARGIN; y++){ if(bin[y*W+x]===1) break; dn++; }
+      if(up>=MARGIN && dn>=MARGIN) iso.push(r.t);
+    }
+    var t0;
+    if(iso.length >= 8){
+      iso.sort(function(a,b){ return a-b; });
+      t0 = iso[(iso.length/2)|0];
+    } else {
+      t0 = Math.max(2, Math.round(SC*2));
+    }
+
+    // 선이 지나는 높이를 부드럽게 다듬는다(열마다 튀는 값을 평균내어 실제 곡선에 맞춘다)
+    var ys=new Array(W), sm=new Array(W);
+    for(x=0;x<W;x++) ys[x] = path[x] ? path[x].y : H/2;
+    var R = Math.max(2, Math.round(W/40));
+    for(x=0;x<W;x++){
+      var s=0, n=0;
+      for(var k=x-R;k<=x+R;k++){ if(k<0||k>=W) continue; s+=ys[k]; n++; }
+      sm[x]=s/n;
+    }
+
+    // 획 전체를 지우지 않고 "선의 두께만큼"만 띠로 지운다.
+    // 글자와 겹친 곳에서도 선 굵기 이상은 절대 사라지지 않는다.
+    var half = (t0*tol)/2;
+    for(x=0;x<W;x++){
+      var a=Math.round(sm[x]-half), b=Math.round(sm[x]+half);
+      if(a<0) a=0;
+      if(b>=H) b=H-1;
+      if(a>b) continue;
+      // 띠 바로 위아래로 획이 이어지면 글자를 가로지른 것이므로 되살린다
+      var above = (a-1>=0) && bin[(a-1)*W+x]===1;
+      var below = (b+1<H)  && bin[(b+1)*W+x]===1;
+      if(above && below) continue;
+      for(y=a;y<=b;y++) out[y*W+x]=0;
     }
     return out;
   }
@@ -360,8 +396,8 @@ const ocr = `
   // ── 6) 선 제거 강도별 정리본 만들기 ─────────────────────
   // 선 두께 기준을 하나로 정하면 어떤 캡차에서는 선이 남고 어떤 캡차에서는
   // 글자가 깎인다. 세 가지 강도로 만들어 뒤에서 서로 대조시킨다.
-  function cleanAt(bin, W, H, ltMul){
-    return despeckle(removeLine(bin, W, H, traceLine(bin, W, H, ltMul)), W, H);
+  function cleanAt(bin, W, H, tol){
+    return despeckle(removeLine(bin, W, H, traceLine(bin, W, H, 4.5), tol), W, H);
   }
 
   function toCanvas(bin, W, H){
@@ -510,17 +546,15 @@ const ocr = `
       status("이미지 정리중...");
       var gr = toGray(img);
       var bin = binarize(gr);
-      var mid  = cleanAt(bin, gr.W, gr.H, 3.5);   // 기본 강도
-      var soft = cleanAt(bin, gr.W, gr.H, 3.0);   // 약하게(선이 조금 남아도 글자 보존)
-      var hard = cleanAt(bin, gr.W, gr.H, 4.0);   // 세게(선을 확실히 제거)
-
-      var cvMid = toCanvas(mid, gr.W, gr.H);
-      // 서로 다른 정리 강도/판독 모드로 여러 번 읽어 각자의 실수를 상쇄시킨다
+      // 지우는 띠의 폭을 달리한 네 가지 정리본. 얇게 지우면 선이 남고 두껍게
+      // 지우면 글자가 상하는데, 어느 쪽이 유리한지는 캡차마다 달라서 함께 읽힌다.
+      var thin = cleanAt(bin, gr.W, gr.H, 0.8);
+      var mid  = cleanAt(bin, gr.W, gr.H, 1.4);
       var jobs = [
-        [cvMid, "7"],                        // 한 줄 모드
-        [cvMid, "8"],                        // 한 단어 모드
-        [toCanvas(soft, gr.W, gr.H), "7"],
-        [toCanvas(hard, gr.W, gr.H), "7"]
+        [toCanvas(thin, gr.W, gr.H), "7"],
+        [toCanvas(cleanAt(bin, gr.W, gr.H, 1.1), gr.W, gr.H), "8"],
+        [toCanvas(mid, gr.W, gr.H), "7"],
+        [toCanvas(cleanAt(bin, gr.W, gr.H, 2.4), gr.W, gr.H), "7"]
       ];
       var cands=[], total=jobs.length+1;
       for(var i=0;i<jobs.length;i++){
