@@ -198,9 +198,36 @@ const ocr = `
       tessedit_pageseg_mode:"7",
       tessedit_char_whitelist:"abcdefghijklmnopqrstuvwxyz"
     });
-    var r=await worker.recognize(c);
+    var r=await worker.recognize(c,{},{blocks:true,text:true});
     await worker.terminate();
-    var t=(r.data.text||"").toLowerCase().replace(/[^a-z]/g,"");
+    // i/j 보정: 위쪽 모양이 같아 혼동되지만 j만 기준선 아래로 꼬리가 내려간다.
+    // 글자별 바운딩박스의 바닥(y1)을 기준선(중앙값)과 비교해 강제로 구분한다.
+    var t="", syms=[];
+    try{
+      (r.data.blocks||[]).forEach(function(b){
+        (b.paragraphs||[]).forEach(function(pg){
+          (pg.lines||[]).forEach(function(ln){
+            (ln.words||[]).forEach(function(wd){
+              (wd.symbols||[]).forEach(function(sy){syms.push(sy);});
+            });
+          });
+        });
+      });
+    }catch(_){}
+    if(syms.length){
+      var bots=syms.map(function(s){return s.bbox.y1;}).sort(function(a,b){return a-b;});
+      var base=bots[Math.floor((bots.length-1)/2)];
+      var DESC=SC*2;
+      t=syms.map(function(s){
+        var ch=(s.text||"").toLowerCase();
+        if(ch==="i"&&s.bbox.y1>base+DESC) ch="j";
+        else if(ch==="j"&&s.bbox.y1<=base+DESC) ch="i";
+        return ch;
+      }).join("");
+    }else{
+      t=r.data.text||"";
+    }
+    t=t.toLowerCase().replace(/[^a-z]/g,"");
     var cap=document.getElementById("captchatext");
     if(t&&cap){
       cap.value=t;
