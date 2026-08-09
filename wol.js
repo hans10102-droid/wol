@@ -149,7 +149,31 @@ const ocr = `
     // 이진화
     var bin=new Uint8ClampedArray(W*H);
     for(var q2=0;q2<total;q2++) bin[q2]=gray[q2]<thr?0:255;
-    // 3x3 미디언 필터 — 얇은 가로줄 제거, 굵은 글자획 유지
+    // 가로줄 추적 제거 — 선은 항상 중간을 가로지르므로 열마다 얇은 검은 조각 중
+    // 이전 열의 선 위치와 이어지는 것만 지운다 (글자획과 겹친 두꺼운 부분은 유지).
+    // c가 e로 읽히는 원인(선이 c의 트인 부분을 닫아버림)을 해결한다.
+    var LT=SC*3, JUMP=SC*5, cy=-1;
+    for(var cx=0;cx<W;cx++){
+      var runs=[], y0=-1;
+      for(var y=0;y<=H;y++){
+        var b=(y<H)&&bin[y*W+cx]===0;
+        if(b&&y0<0){y0=y;}
+        else if(!b&&y0>=0){runs.push([y0,y-1]);y0=-1;}
+      }
+      var best=null,bd=1e9;
+      for(var ri=0;ri<runs.length;ri++){
+        var th=runs[ri][1]-runs[ri][0]+1;
+        if(th>LT) continue;
+        var ctr=(runs[ri][0]+runs[ri][1])/2;
+        var d=(cy<0)?Math.abs(ctr-H/2):Math.abs(ctr-cy);
+        if(d<bd){bd=d;best=runs[ri];}
+      }
+      if(best&&((cy<0&&bd<H/4)||(cy>=0&&bd<=JUMP))){
+        for(var y2=best[0];y2<=best[1];y2++) bin[y2*W+cx]=255;
+        cy=(best[0]+best[1])/2;
+      }
+    }
+    // 3x3 미디언 필터 — 남은 잔여물 정리, 굵은 글자획 유지
     var out=new Uint8ClampedArray(W*H);
     for(var yy=0;yy<H;yy++){
       for(var xx=0;xx<W;xx++){
@@ -172,7 +196,7 @@ const ocr = `
     var worker=await Tesseract.createWorker("eng");
     await worker.setParameters({
       tessedit_pageseg_mode:"7",
-      tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+      tessedit_char_whitelist:"abcdefghijklmnopqrstuvwxyz0123456789"
     });
     var r=await worker.recognize(c);
     await worker.terminate();
