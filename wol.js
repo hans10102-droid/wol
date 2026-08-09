@@ -78,7 +78,56 @@ for (let i = 0; i < 10; i++) {
   await wait(200)
 }
 
-// 화면에 표시 — 여기서 Code(캡차)만 입력하고 로그인하면 됨.
+// ── 캡차(Code) 이미지 자동 인식(OCR) ─────────────────────────────
+// Scriptable 자체엔 OCR이 없어서, 로그인 화면 WebView 안에서
+// Tesseract.js(OCR 라이브러리)를 불러와 캡차 이미지를 읽어 Code 칸을 채운다.
+// 페이지가 http라서 https CDN 로드는 mixed-content 차단 대상이 아니다.
+// 인식 결과가 틀릴 수 있으므로 자동 로그인은 하지 않는다 — 눈으로 확인 후 로그인.
+const ocr =
+  'var completion = completion;' +
+  '(async function(){' +
+  'try{' +
+  // 캡차 iframe(같은 오리진) 안의 이미지를 찾는다. 없으면 잠깐 기다렸다 재시도.
+  'function findImg(){' +
+  'var fr=document.getElementById("mcr_captcha");' +
+  'if(!fr||!fr.contentDocument) return null;' +
+  'return fr.contentDocument.querySelector("img");' +
+  '}' +
+  'var img=null;' +
+  'for(var k=0;k<25;k++){img=findImg();' +
+  'if(img&&(img.complete)&&(img.naturalWidth>0))break;' +
+  'await new Promise(function(r){setTimeout(r,200);});img=null;}' +
+  'if(!img){completion("NOIMG");return;}' +
+  // OCR 엔진 로드(최초 1회, CDN)
+  'if(!window.Tesseract){' +
+  'await new Promise(function(res,rej){' +
+  'var s=document.createElement("script");' +
+  's.src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";' +
+  's.onload=res;s.onerror=function(){rej(new Error("cdn"));};' +
+  'document.head.appendChild(s);});}' +
+  // 이미지를 캔버스로 옮겨 데이터URL 추출(같은 오리진이라 taint 없음)
+  'var c=document.createElement("canvas");' +
+  'c.width=img.naturalWidth;c.height=img.naturalHeight;' +
+  'c.getContext("2d").drawImage(img,0,0);' +
+  'var url=c.toDataURL("image/png");' +
+  'var r=await Tesseract.recognize(url,"eng",' +
+  '{tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"});' +
+  'var t=(r.data.text||"").replace(/[^A-Za-z0-9]/g,"");' +
+  'var cap=document.getElementById("captchatext");' +
+  'if(cap&&t){cap.value=t;' +
+  'cap.dispatchEvent(new Event("input",{bubbles:true}));' +
+  'cap.dispatchEvent(new Event("change",{bubbles:true}));}' +
+  'completion(t||"EMPTY");' +
+  '}catch(e){completion("ERR:"+e);}' +
+  '})();'
+
+try {
+  await wv.evaluateJavaScript(ocr, true)
+} catch (e) {
+  // OCR 실패해도 로그인 화면은 정상 표시 — Code만 직접 입력하면 됨
+}
+
+// 화면에 표시 — 채워진 Code를 확인/수정 후 로그인하면 됨.
 // 창을 닫을 때까지 대기한 뒤 단축어에 즉시 완료를 알린다.
 await wv.present(true)
 Script.complete()
