@@ -83,51 +83,83 @@ for (let i = 0; i < 10; i++) {
 // Tesseract.js(OCR 라이브러리)를 불러와 캡차 이미지를 읽어 Code 칸을 채운다.
 // 페이지가 http라서 https CDN 로드는 mixed-content 차단 대상이 아니다.
 // 인식 결과가 틀릴 수 있으므로 자동 로그인은 하지 않는다 — 눈으로 확인 후 로그인.
-const ocr =
-  'var completion = completion;' +
-  '(async function(){' +
-  'try{' +
-  // 캡차 iframe(같은 오리진) 안의 이미지를 찾는다. 없으면 잠깐 기다렸다 재시도.
-  'function findImg(){' +
-  'var fr=document.getElementById("mcr_captcha");' +
-  'if(!fr||!fr.contentDocument) return null;' +
-  'return fr.contentDocument.querySelector("img");' +
-  '}' +
-  'var img=null;' +
-  'for(var k=0;k<25;k++){img=findImg();' +
-  'if(img&&(img.complete)&&(img.naturalWidth>0))break;' +
-  'await new Promise(function(r){setTimeout(r,200);});img=null;}' +
-  'if(!img){completion("NOIMG");return;}' +
-  // OCR 엔진 로드(최초 1회, CDN)
-  'if(!window.Tesseract){' +
-  'await new Promise(function(res,rej){' +
-  'var s=document.createElement("script");' +
-  's.src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";' +
-  's.onload=res;s.onerror=function(){rej(new Error("cdn"));};' +
-  'document.head.appendChild(s);});}' +
-  // 이미지를 캔버스로 옮겨 데이터URL 추출(같은 오리진이라 taint 없음)
-  'var c=document.createElement("canvas");' +
-  'c.width=img.naturalWidth;c.height=img.naturalHeight;' +
-  'c.getContext("2d").drawImage(img,0,0);' +
-  'var url=c.toDataURL("image/png");' +
-  'var r=await Tesseract.recognize(url,"eng",' +
-  '{tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"});' +
-  'var t=(r.data.text||"").replace(/[^A-Za-z0-9]/g,"");' +
-  'var cap=document.getElementById("captchatext");' +
-  'if(cap&&t){cap.value=t;' +
-  'cap.dispatchEvent(new Event("input",{bubbles:true}));' +
-  'cap.dispatchEvent(new Event("change",{bubbles:true}));}' +
-  'completion(t||"EMPTY");' +
-  '}catch(e){completion("ERR:"+e);}' +
-  '})();'
+const ocr = `
+var completion = completion;
+(async function(){
+  // 화면 맨 위 상태 표시줄: 회색=진행중, 초록=성공, 빨강=실패
+  function status(msg, ok){
+    var d=document.getElementById("__ocr_status");
+    if(!d){
+      d=document.createElement("div");
+      d.id="__ocr_status";
+      d.style.cssText="position:fixed;top:0;left:0;right:0;z-index:9999;padding:8px;text-align:center;font-size:15px;color:#fff;background:#666;";
+      document.body.appendChild(d);
+    }
+    d.textContent=msg;
+    d.style.background = ok===true ? "#2e7d32" : (ok===false ? "#c62828" : "#666");
+  }
+  try{
+    status("캡차 자동인식 준비중...");
+    var img=null;
+    for(var k=0;k<25;k++){
+      var fr=document.getElementById("mcr_captcha");
+      var doc=fr&&fr.contentDocument;
+      var i=doc&&doc.querySelector("img");
+      if(i&&i.complete&&i.naturalWidth>0){img=i;break;}
+      await new Promise(function(r){setTimeout(r,200);});
+    }
+    if(!img){status("캡차 이미지를 못 찾음 — 직접 입력하세요",false);completion("NOIMG");return;}
+    if(!window.Tesseract){
+      status("인식 엔진 내려받는 중 (최초 1회만 느림)...");
+      await new Promise(function(res,rej){
+        var s=document.createElement("script");
+        s.src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+        s.onload=res;
+        s.onerror=function(){rej(new Error("엔진 다운로드 실패(인터넷 확인)"));};
+        document.head.appendChild(s);
+      });
+    }
+    status("캡차 인식중...");
+    // 전처리: 3배 확대 + 흑백 이진화 (줄무늬 캡차 인식률 향상)
+    var c=document.createElement("canvas");
+    var W=img.naturalWidth*3, H=img.naturalHeight*3;
+    c.width=W; c.height=H;
+    var x=c.getContext("2d");
+    x.imageSmoothingEnabled=true;
+    x.drawImage(img,0,0,W,H);
+    var id=x.getImageData(0,0,W,H), p=id.data;
+    for(var j=0;j<p.length;j+=4){
+      var g=p[j]*0.299+p[j+1]*0.587+p[j+2]*0.114;
+      var v=g<140?0:255;
+      p[j]=p[j+1]=p[j+2]=v;
+    }
+    x.putImageData(id,0,0);
+    var r=await Tesseract.recognize(c.toDataURL("image/png"),"eng");
+    var t=(r.data.text||"").replace(/[^A-Za-z0-9]/g,"");
+    var cap=document.getElementById("captchatext");
+    if(t&&cap){
+      cap.value=t;
+      cap.dispatchEvent(new Event("input",{bubbles:true}));
+      cap.dispatchEvent(new Event("change",{bubbles:true}));
+      status("인식 결과: "+t+" — 맞는지 확인 후 로그인",true);
+    }else{
+      status("인식 실패 — Code를 직접 입력하세요",false);
+    }
+    completion(t||"EMPTY");
+  }catch(e){
+    status("인식 오류: "+((e&&e.message)||e)+" — 직접 입력하세요",false);
+    completion("ERR");
+  }
+})();
+`
 
+// 화면을 먼저 띄우고 OCR은 그 위에서 진행 — 진행 상황이 상태줄로 보인다.
+// 창을 닫을 때까지 대기한 뒤 단축어에 즉시 완료를 알린다.
+const presented = wv.present(true)
 try {
   await wv.evaluateJavaScript(ocr, true)
 } catch (e) {
-  // OCR 실패해도 로그인 화면은 정상 표시 — Code만 직접 입력하면 됨
+  // OCR 실패해도 로그인 화면은 그대로 사용 가능 — Code만 직접 입력하면 됨
 }
-
-// 화면에 표시 — 채워진 Code를 확인/수정 후 로그인하면 됨.
-// 창을 닫을 때까지 대기한 뒤 단축어에 즉시 완료를 알린다.
-await wv.present(true)
+await presented
 Script.complete()
