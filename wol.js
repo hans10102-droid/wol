@@ -121,7 +121,7 @@ const ocr = `
       });
     }
     status("캡차 인식중...");
-    // 전처리: 4배 확대 → 그레이스케일 → Otsu 자동 이진화 → 미디언 필터로 가로줄 제거
+    // 전처리: 4배 확대 → 그레이스케일 → Otsu 이진화 → 가로줄 추적 제거 → 작은 얼룩 제거
     var SC=4, W=img.naturalWidth*SC, H=img.naturalHeight*SC;
     var c=document.createElement("canvas");
     c.width=W; c.height=H;
@@ -173,23 +173,31 @@ const ocr = `
         cy=(best[0]+best[1])/2;
       }
     }
-    // 3x3 미디언 필터 — 남은 잔여물 정리, 굵은 글자획 유지
-    var out=new Uint8ClampedArray(W*H);
-    for(var yy=0;yy<H;yy++){
-      for(var xx=0;xx<W;xx++){
-        var black=0,cnt=0;
-        for(var dy=-1;dy<=1;dy++){
-          var ny=yy+dy; if(ny<0||ny>=H) continue;
-          for(var dx=-1;dx<=1;dx++){
-            var nx=xx+dx; if(nx<0||nx>=W) continue;
-            cnt++; if(bin[ny*W+nx]===0) black++;
+    // 작은 얼룩(연결 성분) 제거 — 선을 지우고 남은 짧은 조각만 없애고
+    // 글자 획(픽셀 덩어리가 큼)은 그대로 둔다. 미디언 필터와 달리 얇은
+    // 글자(l, x 등)를 갉아먹지 않는다.
+    var lab=new Int32Array(W*H).fill(0), stack=new Int32Array(W*H);
+    var MINA=Math.max(24, SC*SC*2); // 이보다 작은 검은 덩어리는 잡음으로 제거
+    for(var s0=0;s0<total;s0++){
+      if(bin[s0]!==0||lab[s0]!==0) continue;
+      var sp=0; stack[sp++]=s0; lab[s0]=1; var px=[s0];
+      while(sp>0){
+        var cur=stack[--sp];
+        var cxp=cur%W, cyp=(cur/W)|0;
+        for(var dy2=-1;dy2<=1;dy2++){
+          for(var dx2=-1;dx2<=1;dx2++){
+            if(dx2===0&&dy2===0) continue;
+            var nx2=cxp+dx2, ny2=cyp+dy2;
+            if(nx2<0||nx2>=W||ny2<0||ny2>=H) continue;
+            var ni=ny2*W+nx2;
+            if(bin[ni]===0&&lab[ni]===0){lab[ni]=1;stack[sp++]=ni;px.push(ni);}
           }
         }
-        out[yy*W+xx]=(black*2>cnt)?0:255;
       }
+      if(px.length<MINA){ for(var pi=0;pi<px.length;pi++) bin[px[pi]]=255; }
     }
     for(var q3=0,o=0;q3<total;q3++,o+=4){
-      var vv=out[q3]; p[o]=p[o+1]=p[o+2]=vv; p[o+3]=255;
+      var vv=bin[q3]; p[o]=p[o+1]=p[o+2]=vv; p[o+3]=255;
     }
     x.putImageData(id,0,0);
     // 한 줄 단어 인식(PSM 7) + 글자 화이트리스트
